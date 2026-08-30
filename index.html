@@ -1,0 +1,616 @@
+<!DOCTYPE html><html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Sunset Island - 3D</title><style>
+    * { box-sizing: border-box; }
+    html, body {
+        margin: 0;
+        overflow: hidden;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        font-family: Arial, sans-serif;
+        touch-action: none;
+    }
+
+    canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+    }
+
+    #hud {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 10;
+        color: white;
+        background: rgba(0,0,0,.45);
+        padding: 10px 14px;
+        border-radius: 12px;
+        font-size: 15px;
+        line-height: 1.6;
+        text-shadow: 0 1px 3px black;
+        backdrop-filter: blur(5px);
+    }
+
+    #settings {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 10;
+        background: rgba(0,0,0,.45);
+        padding: 10px;
+        border-radius: 12px;
+        color: white;
+    }
+
+    select, button {
+        font-size: 16px;
+        border-radius: 10px;
+        border: none;
+        padding: 9px 12px;
+    }
+
+    button {
+        background: #f39c12;
+        color: white;
+        font-weight: bold;
+    }
+
+    #crosshair {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        color: white;
+        font-size: 30px;
+        z-index: 5;
+        pointer-events: none;
+        text-shadow: 0 0 5px black;
+    }
+
+    #shoot {
+        position: fixed;
+        right: 25px;
+        bottom: 35px;
+        width: 95px;
+        height: 95px;
+        border-radius: 50%;
+        z-index: 20;
+        background: rgba(220,50,40,.85);
+        border: 3px solid white;
+        font-size: 17px;
+    }
+
+    #joystick {
+        position: fixed;
+        left: 25px;
+        bottom: 35px;
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        background: rgba(255,255,255,.13);
+        border: 2px solid rgba(255,255,255,.45);
+        z-index: 20;
+    }
+
+    #stick {
+        position: absolute;
+        width: 52px;
+        height: 52px;
+        left: 32px;
+        top: 32px;
+        border-radius: 50%;
+        background: rgba(255,255,255,.55);
+    }
+
+    #message {
+        position: fixed;
+        z-index: 30;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        color: white;
+        font-size: 28px;
+        font-weight: bold;
+        text-align: center;
+        background: rgba(0,0,0,.65);
+        padding: 25px;
+        border-radius: 18px;
+        display: none;
+    }
+
+    #message button {
+        display: block;
+        margin: 18px auto 0;
+    }
+
+    #info {
+        position: fixed;
+        bottom: 5px;
+        left: 50%;
+        transform: translateX(-50%);
+        color: rgba(255,255,255,.7);
+        font-size: 12px;
+        z-index: 10;
+    }
+</style></head><body><div id="hud">
+    🏝️ Gün Batımı Adası<br>
+    🐍 Kalan Yılan: <span id="snakeCount">5</span><br>
+    🔫 Mermi: ∞<br>
+    🏊 Durum: <span id="status">Karada</span>
+</div><div id="settings">
+    Görüntü:
+    <select id="quality">
+        <option value="hd">HD</option>
+        <option value="hdr">HDR Efekt</option>
+    </select>
+</div><div id="crosshair">+</div><div id="joystick"><div id="stick"></div></div>
+<button id="shoot">ATEŞ 🔫</button><div id="message">
+    <div id="messageText"></div>
+    <button onclick="location.reload()">Tekrar Oyna</button>
+</div><div id="info">Sol kontrol: Hareket • Ekranı sürükle: Bakış • ATEŞ: Yılanlara ateş et</div><script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script><script>
+let scene, camera, renderer, clock;
+let snakes = [];
+let raycaster = new THREE.Raycaster();
+let moveX = 0, moveY = 0;
+let isSwimming = false;
+let gameWon = false;
+let yaw = 0, pitch = 0;
+
+const WORLD_SIZE = 250;
+
+init();
+animate();
+
+function init() {
+    clock = new THREE.Clock();
+
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xff8a55);
+    scene.fog = new THREE.Fog(0xffb07c, 80, 280);
+
+    camera = new THREE.PerspectiveCamera(
+        70,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        1000
+    );
+
+    // Deniz kenarındaki doğuş noktası
+    camera.position.set(0, 2.2, 14);
+
+    renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        powerPreference: "high-performance"
+    });
+
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    // Gün batımı ışığı
+    const sunLight = new THREE.DirectionalLight(0xffa060, 2.2);
+    sunLight.position.set(-80, 50, -100);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.set(2048, 2048);
+    scene.add(sunLight);
+
+    const ambient = new THREE.HemisphereLight(0xffbb88, 0x224455, 1.8);
+    scene.add(ambient);
+
+    createSun();
+    createOcean();
+    createIsland();
+    createPalmTrees();
+    createSnakes();
+
+    window.addEventListener("resize", onResize);
+    setupControls();
+
+    document.getElementById("quality").addEventListener("change", e => {
+        if (e.target.value === "hdr") {
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.45;
+        } else {
+            renderer.toneMapping = THREE.NoToneMapping;
+        }
+    });
+}
+
+function createSun() {
+    const sun = new THREE.Mesh(
+        new THREE.SphereGeometry(13, 32, 32),
+        new THREE.MeshBasicMaterial({ color: 0xff6b28 })
+    );
+
+    sun.position.set(-100, 28, -170);
+    scene.add(sun);
+}
+
+function createOcean() {
+    const ocean = new THREE.Mesh(
+        new THREE.PlaneGeometry(1000, 1000, 80, 80),
+        new THREE.MeshPhongMaterial({
+            color: 0x087aa0,
+            transparent: true,
+            opacity: 0.88,
+            shininess: 120,
+            side: THREE.DoubleSide
+        })
+    );
+
+    ocean.rotation.x = -Math.PI / 2;
+    ocean.position.y = -0.25;
+    scene.add(ocean);
+    scene.userData.ocean = ocean;
+}
+
+function createIsland() {
+    // Ada tabanı
+    const island = new THREE.Mesh(
+        new THREE.CylinderGeometry(43, 52, 2.5, 64),
+        new THREE.MeshStandardMaterial({
+            color: 0xd9b66d,
+            roughness: 0.9
+        })
+    );
+
+    island.position.y = -1.2;
+    island.receiveShadow = true;
+    scene.add(island);
+
+    // Kumsal
+    const beach = new THREE.Mesh(
+        new THREE.CircleGeometry(42, 64),
+        new THREE.MeshStandardMaterial({
+            color: 0xf4d28b,
+            roughness: 1
+        })
+    );
+
+    beach.rotation.x = -Math.PI / 2;
+    beach.position.y = 0.02;
+    beach.receiveShadow = true;
+    scene.add(beach);
+
+    // Ada içi yeşillik
+    const grass = new THREE.Mesh(
+        new THREE.CircleGeometry(29, 64),
+        new THREE.MeshStandardMaterial({
+            color: 0x2f8f45,
+            roughness: 1
+        })
+    );
+
+    grass.rotation.x = -Math.PI / 2;
+    grass.position.y = 0.08;
+    scene.add(grass);
+}
+
+function createPalmTree(x, z) {
+    const tree = new THREE.Group();
+
+    const trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.45, 0.75, 8, 10),
+        new THREE.MeshStandardMaterial({ color: 0x7b4d2a })
+    );
+
+    trunk.position.y = 4;
+    trunk.rotation.z = (Math.random() - .5) * .18;
+    trunk.castShadow = true;
+    tree.add(trunk);
+
+    for (let i = 0; i < 8; i++) {
+        const leaf = new THREE.Mesh(
+            new THREE.ConeGeometry(1.1, 8, 6),
+            new THREE.MeshStandardMaterial({
+                color: 0x176d35,
+                side: THREE.DoubleSide
+            })
+        );
+
+        leaf.position.y = 8;
+        leaf.rotation.z = Math.PI / 2;
+        leaf.rotation.y = (Math.PI * 2 / 8) * i;
+        leaf.castShadow = true;
+        tree.add(leaf);
+    }
+
+    tree.position.set(x, 0, z);
+    scene.add(tree);
+}
+
+function createPalmTrees() {
+    const positions = [
+        [-22,-10], [22,-12], [-18,18], [19,18],
+        [-30,4], [30,7], [-8,-25], [10,-27],
+        [-25,25], [27,-22], [0,25], [-35,-15]
+    ];
+
+    positions.forEach(p => createPalmTree(p[0], p[1]));
+}
+
+function createSnakes() {
+    const positions = [
+        [-12, -5],
+        [14, -8],
+        [-18, 15],
+        [10, 18],
+        [0, 26]
+    ];
+
+    positions.forEach((p, index) => {
+        const snake = new THREE.Group();
+
+        const body = new THREE.Mesh(
+            new THREE.CapsuleGeometry(0.5, 4, 6, 10),
+            new THREE.MeshStandardMaterial({
+                color: index % 2 ? 0x4c7a28 : 0x6b8e23
+            })
+        );
+
+        body.rotation.z = Math.PI / 2;
+        body.position.y = 0.65;
+        body.castShadow = true;
+
+        const head = new THREE.Mesh(
+            new THREE.SphereGeometry(0.65, 12, 12),
+            new THREE.MeshStandardMaterial({ color: 0x557f2b })
+        );
+
+        head.position.set(2.3, 0.65, 0);
+        head.castShadow = true;
+
+        snake.add(body);
+        snake.add(head);
+
+        snake.position.set(p[0], 0, p[1]);
+        snake.rotation.y = Math.random() * Math.PI * 2;
+        snake.userData.alive = true;
+        snake.userData.speed = 0.35 + Math.random() * 0.2;
+        snake.userData.phase = Math.random() * 10;
+
+        scene.add(snake);
+        snakes.push(snake);
+    });
+}
+
+function setupControls() {
+    const joystick = document.getElementById("joystick");
+    const stick = document.getElementById("stick");
+    const shoot = document.getElementById("shoot");
+
+    let joyActive = false;
+
+    function updateJoystick(e) {
+        const rect = joystick.getBoundingClientRect();
+        const touch = e.touches ? e.touches[0] : e;
+        let x = touch.clientX - rect.left - rect.width / 2;
+        let y = touch.clientY - rect.top - rect.height / 2;
+
+        const max = 35;
+        const length = Math.sqrt(x*x + y*y);
+
+        if (length > max) {
+            x = x / length * max;
+            y = y / length * max;
+        }
+
+        stick.style.left = (32 + x) + "px";
+        stick.style.top = (32 + y) + "px";
+
+        moveX = x / max;
+        moveY = y / max;
+    }
+
+    joystick.addEventListener("touchstart", e => {
+        joyActive = true;
+        updateJoystick(e);
+        e.preventDefault();
+    });
+
+    joystick.addEventListener("touchmove", e => {
+        if (joyActive) updateJoystick(e);
+        e.preventDefault();
+    });
+
+    joystick.addEventListener("touchend", () => {
+        joyActive = false;
+        moveX = moveY = 0;
+        stick.style.left = "32px";
+        stick.style.top = "32px";
+    });
+
+    // Ekranı sürükleyerek etrafa bakma
+    let looking = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    document.addEventListener("touchstart", e => {
+        if (e.target === joystick || e.target === stick || e.target === shoot) return;
+        looking = true;
+        lastX = e.touches[0].clientX;
+        lastY = e.touches[0].clientY;
+    });
+
+    document.addEventListener("touchmove", e => {
+        if (!looking) return;
+
+        const t = e.touches[0];
+        const dx = t.clientX - lastX;
+        const dy = t.clientY - lastY;
+
+        yaw -= dx * 0.005;
+        pitch -= dy * 0.004;
+        pitch = Math.max(-1.2, Math.min(1.2, pitch));
+
+        lastX = t.clientX;
+        lastY = t.clientY;
+    });
+
+    document.addEventListener("touchend", () => looking = false);
+
+    shoot.addEventListener("touchstart", e => {
+        shootSnake();
+        e.preventDefault();
+    });
+
+    shoot.addEventListener("click", shootSnake);
+
+    // Bilgisayarda test etmek için
+    window.addEventListener("keydown", e => {
+        if (e.code === "Space") shootSnake();
+        if (e.key === "w") moveY = -1;
+        if (e.key === "s") moveY = 1;
+        if (e.key === "a") moveX = -1;
+        if (e.key === "d") moveX = 1;
+    });
+
+    window.addEventListener("keyup", e => {
+        if (["w","s"].includes(e.key)) moveY = 0;
+        if (["a","d"].includes(e.key)) moveX = 0;
+    });
+}
+
+function shootSnake() {
+    if (gameWon) return;
+
+    // Ekranın ortasından hedef alma
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+
+    const targets = [];
+    snakes.forEach(s => {
+        if (s.userData.alive) {
+            s.traverse(child => {
+                if (child.isMesh) targets.push(child);
+            });
+        }
+    });
+
+    const hits = raycaster.intersectObjects(targets, false);
+
+    if (hits.length > 0) {
+        let obj = hits[0].object;
+
+        while (obj.parent && !snakes.includes(obj)) {
+            obj = obj.parent;
+        }
+
+        if (obj && obj.userData.alive) {
+            obj.userData.alive = false;
+            scene.remove(obj);
+
+            const alive = snakes.filter(s => s.userData.alive).length;
+            document.getElementById("snakeCount").textContent = alive;
+
+            if (alive === 0) {
+                gameWon = true;
+                document.getElementById("messageText").innerHTML =
+                    "🏆 KAZANDIN!<br><br>5 yılanın tamamını yendin ve adayı temizledin!";
+                document.getElementById("message").style.display = "block";
+            }
+        }
+    }
+}
+
+function updatePlayer(delta) {
+    const speed = isSwimming ? 7 : 11;
+
+    const forward = new THREE.Vector3(
+        Math.sin(yaw),
+        0,
+        Math.cos(yaw)
+    );
+
+    const right = new THREE.Vector3(
+        Math.cos(yaw),
+        0,
+        -Math.sin(yaw)
+    );
+
+    const movement = new THREE.Vector3();
+
+    movement.addScaledVector(forward, -moveY * speed * delta);
+    movement.addScaledVector(right, moveX * speed * delta);
+
+    camera.position.add(movement);
+
+    // Ada merkezi ile uzaklık
+    const distance = Math.sqrt(
+        camera.position.x * camera.position.x +
+        camera.position.z * camera.position.z
+    );
+
+    // 42 birimden dışarı çıkınca suya girilir
+    isSwimming = distance > 42;
+
+    if (isSwimming) {
+        camera.position.y = 0.9;
+        document.getElementById("status").textContent = "Yüzüyorsun 🌊";
+    } else {
+        camera.position.y = 2.2;
+        document.getElementById("status").textContent = "Karada";
+    }
+
+    // Dünyadan çok uzaklaşmayı engelle
+    if (distance > 230) {
+        camera.position.x *= 0.99;
+        camera.position.z *= 0.99;
+    }
+
+    camera.rotation.order = "YXZ";
+    camera.rotation.y = yaw;
+    camera.rotation.x = pitch;
+}
+
+function updateSnakes(time, delta) {
+    snakes.forEach(snake => {
+        if (!snake.userData.alive) return;
+
+        // Hafif hareket
+        snake.position.x += Math.sin(time * 1.5 + snake.userData.phase)
+            * snake.userData.speed * delta;
+
+        snake.position.z += Math.cos(time * 1.2 + snake.userData.phase)
+            * snake.userData.speed * delta;
+
+        snake.rotation.y += Math.sin(time + snake.userData.phase)
+            * 0.5 * delta;
+    });
+}
+
+function updateOcean(time) {
+    const ocean = scene.userData.ocean;
+    if (!ocean) return;
+
+    // Hafif deniz hareketi
+    ocean.position.y = -0.25 + Math.sin(time * 1.2) * 0.08;
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+
+    const delta = Math.min(clock.getDelta(), 0.05);
+    const time = clock.elapsedTime;
+
+    if (!gameWon) {
+        updatePlayer(delta);
+        updateSnakes(time, delta);
+    }
+
+    updateOcean(time);
+    renderer.render(scene, camera);
+}
+
+function onResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+</script></body>
+</html>
